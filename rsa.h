@@ -27,7 +27,7 @@ int RSASign( RSA* rsa,
   EVP_MD_CTX* m_RSASignCtx = EVP_MD_CTX_create();
   EVP_PKEY* priKey  = EVP_PKEY_new();
   EVP_PKEY_assign_RSA(priKey, rsa);
-  if (EVP_DigestSignInit(m_RSASignCtx,NULL, EVP_sha256(), NULL,priKey)<=0) {
+  if (EVP_DigestSignInit(m_RSASignCtx,NULL, EVP_sha3_256(), NULL,priKey)<=0) {
       return 0;
   }
   if (EVP_DigestSignUpdate(m_RSASignCtx, Msg, MsgLen) <= 0) {
@@ -111,7 +111,7 @@ int RSAVerifySignature( RSA* rsa,
   EVP_PKEY* pubKey  = EVP_PKEY_new();
   EVP_PKEY_assign_RSA(pubKey, rsa);
   EVP_MD_CTX* m_RSAVerifyCtx = EVP_MD_CTX_create();
-  if (EVP_DigestVerifyInit(m_RSAVerifyCtx,NULL, EVP_sha256(),NULL,pubKey)<=0) {
+  if (EVP_DigestVerifyInit(m_RSAVerifyCtx,NULL, EVP_sha3_256(),NULL,pubKey)<=0) {
     return 0;
   }
   if (EVP_DigestVerifyUpdate(m_RSAVerifyCtx, Msg, MsgLen) <= 0) {
@@ -143,6 +143,40 @@ int verifySignature(unsigned char* publicKey, unsigned char* plainText, char* si
   return result & authentic;
 }
 
+int encrypt_len=0;
+char* public_encrypt_rsa(unsigned char* publicKey, unsigned char* plainText){
+  RSA* publicRSA = createPublicRSA(publicKey);
+  char *encrypt = malloc(RSA_size(publicRSA));
+  
+  char* err = malloc(130);
+  //char* base64Text;
+  if((encrypt_len = RSA_public_encrypt(strlen(plainText)+1, (unsigned char*)plainText,
+   (unsigned char*)encrypt, publicRSA, RSA_PKCS1_OAEP_PADDING)) == -1) {
+    ERR_load_crypto_strings();
+    ERR_error_string(ERR_get_error(), err);
+    fprintf(stderr, "Error encrypting message: %s\n", err);
+  }
+  //Base64Encode(encrypt, encrypt_len, &base64Text);
+  free(err);
+  return encrypt;
+}
 
+char* private_decrypt_rsa(unsigned char* privateKey, unsigned char* encrypt){
+ RSA* privateRSA = createPrivateRSA(privateKey);
+ char *decrypt = malloc(strlen(encrypt));
+ //char* base64Text;
+ char* err = malloc(130);
+ printf("\n%d",strlen(encrypt)+20);
+ //Base64Decode(decrypt, sizeof(encrypt), &base64Text);
+ if(RSA_private_decrypt(384, (unsigned char*)encrypt, (unsigned char*)decrypt,
+                       privateRSA, RSA_PKCS1_OAEP_PADDING) == -1) {
+   ERR_load_crypto_strings();
+   ERR_error_string(ERR_get_error(), err);
+   fprintf(stderr, "Error decrypting message: %s\n", err);
+   return NULL;
+ }
+ free(err);
+ return decrypt;
+}
 
 

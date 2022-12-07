@@ -12,10 +12,10 @@
 #include<fcntl.h>
 #include<sys/wait.h>
 #include "rsa.h"
+#include "ecdhe.h"
 #include <openssl/sha.h>
-
-
 #include <openssl/evp.h>
+#include <unistd.h>
 
 // Function designed for chat between client and server.
 
@@ -31,24 +31,26 @@ void func(int connfd)
 	unsigned char* server_public_key_data = (unsigned char*)malloc(sizeof(char)*2500);;
 	unsigned char* ca_private_key_data = (unsigned char*)malloc(sizeof(char)*2500);
 	unsigned char* digest=(unsigned char*)malloc(sizeof(char)*800);
-	unsigned char* sign=(unsigned char*)malloc(sizeof(char)*100);
+	//unsigned char* sign=(unsigned char*)malloc(sizeof(char)*100);
+	unsigned char* client_dh = (unsigned char*)malloc(sizeof(char)*800);
+	unsigned char* client_pub, *server_pub;
+	EC_KEY* server;
+	const EC_POINT *server_public;
 	int n,f1,digest_len;
-	EVP_MD_CTX * mdctx;
-	EVP_MD * algo = EVP_sha3_512();
-	//FILE* fp;
+	EC_POINT *client_public;
 	
 	//1. genererate nonce1 which is sent from server to client
 	
 	f1 = open("/dev/urandom",O_RDONLY);
 	read(f1, server_random, sizeof(char)*32);//sizeof(client_random));
 	close(f1);
-	//printf("server nonce = %s",server_random);
+	printf("\nSending server random = %s",server_random);
 	
 	//recieve random from client
 	bzero(buff, sizeof(buff));
 	read(connfd, buff, sizeof(buff));
 	memcpy(client_random,buff,32);
-	//printf("Recieved Client nonce : %s", client_random);
+	printf("\nRecieved Client random : %s", client_random);
 	
 	//send random to client
 	bzero(buff, sizeof(buff));
@@ -60,57 +62,64 @@ void func(int connfd)
 	
 	//send server public key
 	
-	f1 = open("Server_keys/private_key.pem",O_RDONLY);	
+	f1 = open("Server_keys/public_key.pem",O_RDONLY);	
 	read(f1, server_public_key_data, sizeof(char)*2484);	
 	close(f1);
 	write(connfd, server_public_key_data, sizeof(char)*2484);
 	
 	//send digital signature
-	/*
-	if ((mdctx = EVP_MD_CTX_create()) == NULL) {
-		HANDLE_ERROR("EVP_MD_CTX_create() error")
-	}
-	if (EVP_DigestInit_ex(mdctx, algo, NULL) != 1) { // returns 1 if successful
-		HANDLE_ERROR2("EVP_DigestInit_ex() error", mdctx)
-	}
 	
-	if (EVP_DigestUpdate(mdctx, server_public_key_data, 2484) != 1) { // returns 1 if successful
-			HANDLE_ERROR2("EVP_DigestUpdate() error", mdctx)
-	}
-	
-	digest_len = EVP_MD_size(algo);
-
-	if ((digest = (unsigned char *)OPENSSL_malloc(digest_len)) == NULL) {
-		HANDLE_ERROR2("OPENSSL_malloc() error", mdctx)
-	}
-
-	// produce digest
-	if (EVP_DigestFinal_ex(mdctx, digest, &digest_len) != 1) { // returns 1 if successful
-		OPENSSL_free(digest);
-		HANDLE_ERROR2("EVP_DigestFinal_ex() error", mdctx)
-	}
-	private_encrypt(digest,64,"CA_keys/private-key.pem",sign);
-	write(connfd, sign, digest_len+10);
-	
-	/*
-	openssl_evp_rsa_signature(server_public_key_data,2484,digest,64,"CA_keys/private-key.pem",NULL);
-	printf("\n%s",digest);
-	*/
-	//printf("\n%s \n hi",sign);
-	
-	//write(connfd, digest, digest_len+10);	
 	f1 = open("CA_keys/private-key.pem",O_RDONLY);	
 	read(f1, ca_private_key_data, sizeof(char)*2484);	
 	close(f1);
 	digest = signMessage(ca_private_key_data,server_public_key_data);
 	write(connfd, digest, 5000);
-	printf("%s",digest);
+	//printf("%s",digest);
+	
+	
+	//3. Now recieve the secret from client and send own dh public info ->>>>>>> then derive the premaster secret
+	
+	//recieve clients public key
+	read(connfd, client_dh, 600);
+	//printf("\n recieved enc client dh:%s",client_dh);
+	bzero(ca_private_key_data, sizeof(ca_private_key_data)); //ca_private_key_data is being reused as server_private_key_data
+	f1 = open("Server_keys/private_key.pem",O_RDONLY);	
+	read(f1, ca_private_key_data, sizeof(char)*2500);	
+	close(f1);
+	//printf("%s",ca_private_key_data);
+	client_pub = private_decrypt_rsa(ca_private_key_data,client_dh);
+	
+	printf("\nDecrypted client dh:\n %s",client_pub);
+	//convert client_pub back to struct
+	client_public = (EC_POINT*)client_pub;
+	
+	//generate server keys, sign with private key and share with client
+	server = create_key();
+	server_public = EC_KEY_get0_public_key(server);
+	server_pub = (unsigned char*)malloc(sizeof(server_public));
+	memcpy(server_pub,(unsigned char*)&server_public, sizeof(server_public));
+	//memcpy(server_pub,"1234567",8);
+	write(connfd, server_pub, sizeof(server_pub));
+	printf("\n sent server dh: %s\n",server_pub);
+	
+	sleep(5);
+	/*
+	bzero(digest, 800);
+	digest = signMessage(ca_private_key_data,server_pub);
+	printf("\n sent digest: %s",digest);
+	write(connfd, digest, 600);
+	
+	printf("\ndecrypted client dh: %s",client_pub);
+	printf("\nsent server dh: %s",server_pub);
+	//now generate the shared pre-master secret
+	/*
 	free(server_random);
 	free(client_random);
 	free(server_public_key_data);
 	free(ca_private_key_data);
 	free(digest);
-	
+	free(client_dh);
+	*/
 }
 
 // Driver function
