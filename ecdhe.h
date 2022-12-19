@@ -20,6 +20,8 @@ EC_KEY *create_key(void)
 	return key;
 }
 
+
+
 unsigned char *get_secret(EC_KEY *key, const EC_POINT *peer_pub_key,
 			size_t *secret_len)
 {
@@ -39,6 +41,7 @@ unsigned char *get_secret(EC_KEY *key, const EC_POINT *peer_pub_key,
 
 	if (*secret_len <= 0) {
 		OPENSSL_free(secret);
+		printf("hello");
 		return NULL;
 	}
 	return secret;

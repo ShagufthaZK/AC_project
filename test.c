@@ -1,107 +1,94 @@
-#include <openssl/rsa.h>
-#include <openssl/pem.h>
-#include <openssl/err.h>
+//by Aashish Dugar
+/**
+ * See https://wiki.openssl.org/index.php/Elliptic_Curve_Diffie_Hellman
+ * for source. The function below are based on the ecdh_low algorithm
+ * described on that page and utilizes the OpenSSL low-level APIs for
+ * Elliptic Curve Diffie Hellman key exchange algorithm.
+ */
+
+#include <assert.h>
 #include <stdio.h>
-#include <string.h>
 
-#define KEY_LENGTH  2048
-#define PUB_EXP     3
-#define PRINT_KEYS
-#define WRITE_TO_FILE
+#include <openssl/ec.h>
+#include <openssl/ecdh.h>
+#include <openssl/evp.h>
 
-int main(void) {
-    size_t pri_len;            // Length of private key
-    size_t pub_len;            // Length of public key
-    char   *pri_key;           // Private key
-    char   *pub_key;           // Public key
-    char   msg[KEY_LENGTH/8];  // Message to encrypt
-    char   *encrypt = NULL;    // Encrypted message
-    char   *decrypt = NULL;    // Decrypted message
-    char   *err;               // Buffer for any error messages
+EC_KEY *create_key(void)
+{
+	EC_KEY *key;
+	if (NULL == (key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1))) {
+		printf("Failed to create key curve\n");
+		return NULL;
+	}
 
-    // Generate key pair
-    printf("Generating RSA (%d bits) keypair...", KEY_LENGTH);
-    fflush(stdout);
-    RSA *keypair = RSA_generate_key(KEY_LENGTH, PUB_EXP, NULL, NULL);
+	if (1 != EC_KEY_generate_key(key)) {
+		printf("Failed to generate key\n");
+		return NULL;
+	}
+	return key;
+}
 
-    // To get the C-string PEM form:
-    BIO *pri = BIO_new(BIO_s_mem());
-    BIO *pub = BIO_new(BIO_s_mem());
+unsigned char *get_secret(EC_KEY *key, const EC_POINT *peer_pub_key,
+			size_t *secret_len)
+{
+	int field_size;
+	unsigned char *secret;
 
-    PEM_write_bio_RSAPrivateKey(pri, keypair, NULL, NULL, 0, NULL, NULL);
-    PEM_write_bio_RSAPublicKey(pub, keypair);
+	field_size = EC_GROUP_get_degree(EC_KEY_get0_group(key));
+	*secret_len = (field_size + 7) / 8;
 
-    pri_len = BIO_pending(pri);
-    pub_len = BIO_pending(pub);
+	if (NULL == (secret = OPENSSL_malloc(*secret_len))) {
+		printf("Failed to allocate memory for secret");
+		return NULL;
+	}
 
-    pri_key = malloc(pri_len + 1);
-    pub_key = malloc(pub_len + 1);
+	*secret_len = ECDH_compute_key(secret, *secret_len,
+					peer_pub_key, key, NULL);
 
-    BIO_read(pri, pri_key, pri_len);
-    BIO_read(pub, pub_key, pub_len);
+	if (*secret_len <= 0) {
+		OPENSSL_free(secret);
+		return NULL;
+	}
+	return secret;
+}
 
-    pri_key[pri_len] = '\0';
-    pub_key[pub_len] = '\0';
+int main(int argc, char *argv[])
+{
+	EC_KEY *alice = create_key();
+	EC_KEY *bob = create_key();
+	assert(alice != NULL && bob != NULL);
+	unsigned char buf[100];
+	int len;
 
-    #ifdef PRINT_KEYS
-        printf("\n%s\n%s\n", pri_key, pub_key);
-    #endif
-    printf("done.\n");
+	const EC_POINT *alice_public = EC_KEY_get0_public_key(alice);
+	const EC_POINT *bob_public = EC_KEY_get0_public_key(bob);
+	EC_POINT *alice_public1 = EC_POINT_new(EC_KEY_get0_group(alice)); 
+	
+	len = EC_POINT_point2oct(EC_KEY_get0_group(alice), alice_public, POINT_CONVERSION_UNCOMPRESSED,
+                             buf, sizeof(buf), NULL);
+                             
+        printf("%d\n",len);
+        
+        printf("%d\n",EC_POINT_oct2point(EC_KEY_get0_group(bob), alice_public1, buf, len, NULL));
+        printf("%d\n",EC_POINT_cmp(EC_KEY_get0_group(alice),alice_public,alice_public1,NULL));
+        
+	
+	size_t alice_secret_len;
+	size_t bob_secret_len;
 
-    // Get the message to encrypt
-    printf("Message to encrypt: ");
-    fgets(msg, KEY_LENGTH-1, stdin);
-    msg[strlen(msg)-1] = '\0';
+	unsigned char *alice_secret = get_secret(alice, bob_public, &alice_secret_len);
+	unsigned char *bob_secret = get_secret(bob, alice_public, &bob_secret_len);
+	printf("%s",alice_secret);
+	assert(alice_secret != NULL && bob_secret != NULL
+		&& alice_secret_len == bob_secret_len);
 
-    // Encrypt the message
-    encrypt = malloc(RSA_size(keypair));
-    int encrypt_len;
-    err = malloc(130);
-    if((encrypt_len = RSA_public_encrypt(strlen(msg)+1, (unsigned char*)msg, (unsigned char*)encrypt,
-                                         keypair, RSA_PKCS1_OAEP_PADDING)) == -1) {
-        ERR_load_crypto_strings();
-        ERR_error_string(ERR_get_error(), err);
-        fprintf(stderr, "Error encrypting message: %s\n", err);
-        goto free_stuff;
-    }
+	for (int i = 0; i < alice_secret_len; i++)
+		assert(alice_secret[i] == bob_secret[i]);
 
-    #ifdef WRITE_TO_FILE
-    // Write the encrypted message to a file
-        FILE *out = fopen("out.bin", "w");
-        fwrite(encrypt, sizeof(*encrypt),  RSA_size(keypair), out);
-        fclose(out);
-        printf("Encrypted message written to file.\n");
-        free(encrypt);
-        encrypt = NULL;
+	EC_KEY_free(alice);
+	EC_KEY_free(bob);
+	OPENSSL_free(alice_secret);
+	OPENSSL_free(bob_secret);
 
-        // Read it back
-        printf("Reading back encrypted message and attempting decryption...\n");
-        encrypt = malloc(RSA_size(keypair));
-        out = fopen("out.bin", "r");
-        fread(encrypt, sizeof(*encrypt), RSA_size(keypair), out);
-        fclose(out);
-    #endif
-
-    // Decrypt it
-    decrypt = malloc(encrypt_len);
-    if(RSA_private_decrypt(encrypt_len, (unsigned char*)encrypt, (unsigned char*)decrypt,
-                           keypair, RSA_PKCS1_OAEP_PADDING) == -1) {
-        ERR_load_crypto_strings();
-        ERR_error_string(ERR_get_error(), err);
-        fprintf(stderr, "Error decrypting message: %s\n", err);
-        goto free_stuff;
-    }
-    printf("Decrypted message: %s\n", decrypt);
-
-    free_stuff:
-    RSA_free(keypair);
-    BIO_free_all(pub);
-    BIO_free_all(pri);
-    free(pri_key);
-    free(pub_key);
-    free(encrypt);
-    free(decrypt);
-    free(err);
-
-    return 0;
+	return 0;
 }

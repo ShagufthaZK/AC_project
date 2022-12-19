@@ -16,19 +16,25 @@
 #include <openssl/ec.h>
 #include <openssl/ecdh.h>
 #include <unistd.h>
+#include <openssl/kdf.h>
+
 
 void func(int sockfd)
 {
 	char buff[MAX];
+	unsigned char master_secret[49];
+	unsigned char aes_key[33];
 	unsigned char* client_random = (unsigned char*)malloc(sizeof(char)*33);
 	unsigned char* server_random = (unsigned char*)malloc(sizeof(char)*33);
+	unsigned char* seed = (unsigned char*)malloc(sizeof(char)*65);
 	unsigned char* server_public_key_data = (unsigned char*)malloc(sizeof(char)*626);
 	unsigned char* ca_public_key_data = (unsigned char*)malloc(sizeof(char)*2500);
 	int n,f1;
 	unsigned char* digest = (unsigned char*)malloc(sizeof(char)*521);
 	EC_KEY* client;
-	const EC_POINT *client_public;
-	unsigned char *client_pub, *enc_dh,*server_pub;
+	const EC_POINT *client_public, *server_public;
+	unsigned char *client_pub, *enc_dh,*server_pub, *pre_master_secret;
+	size_t pre_master_secret_len;
 	
 	
 	//1. genererate nonce1 which is sent from client to server
@@ -67,7 +73,7 @@ void func(int sockfd)
 	close(f1);
 	n = verifySignature(ca_public_key_data,server_public_key_data,digest);	
 	if(n==0){
-		printf("Server certificate invalid");
+		printf("\nServer certificate invalid");
 		return;
 	}else{
 		printf("\nSignature verified\n");
@@ -80,28 +86,33 @@ void func(int sockfd)
 	//generate client ecdhe parameters
 	client = create_key();
 	client_public = EC_KEY_get0_public_key(client);
-	client_pub = (unsigned char*)malloc(sizeof(client_public));
-	memcpy(client_pub,(unsigned char*)&client_public, sizeof(client_public));
+	
+	//convert param to unsigned char
+	client_pub = (unsigned char*)malloc(sizeof(char)*66);
+	n = EC_POINT_point2oct(EC_KEY_get0_group(client), client_public, POINT_CONVERSION_UNCOMPRESSED, client_pub, 66, NULL);
+	//client_pub[n]='\0';
+	printf("\nlenght of serialized dh param: %d",n);
 	
 	//encrypt and send using server public rsa key
 	enc_dh = public_encrypt_rsa(server_public_key_data,client_pub);
 	printf("\nSent Client DH param: %s",client_pub);
-	//printf("\nsent to server:%s",enc_dh);
-	n = write(sockfd, enc_dh, 384);
-	printf("\n bytes sent to server for dh: %d",n);
+	printf("\nsent to server:%s",enc_dh);
+	n = 0;
+	while(enc_dh[n]!='\0') ++n;
+	printf("\nlength of enc_dh:%d",n);
+	n = write(sockfd, enc_dh, 600);
+	printf("\nbytes sent to server for dh: %d",n);
 	
 	//recieve server dh 
-	server_pub = (unsigned char*)malloc(800);
-	bzero(buff, sizeof(buff));
-	n = read(sockfd, buff, sizeof(buff));
-	memcpy(server_pub,buff,sizeof(server_pub));
-	printf("\n Recieved server DH param: %s and bytes read %d\n",buff,n);
-	
+	server_pub = (unsigned char*)malloc(66);
+	n = read(sockfd, server_pub, 66);
+	printf("\nRecieved server DH param: %s and bytes read %d\n",server_pub,n);
+	//server_public = (EC_POINT*)server_pub;
 	
 	//verify server dh using digital signature
 	bzero(digest, 521);
 	read(sockfd, digest, 521);
-	printf("\n Recieved digital signature:\n %s",digest);
+	printf("\nRecieved digital signature:\n %s",digest);
 	n = verifySignature(server_public_key_data,server_pub,digest);
 	if(n==0){
 		printf("\nServer DH tampered: invalid");
@@ -110,17 +121,59 @@ void func(int sockfd)
 		printf("\nServer DH valid");
 	}
 	
-	printf("\n client dh: %s",client_pub);
+	printf("\nclient dh: %s",client_pub);
 	printf("\nserver dh: %s",server_pub);
 	
 	
 	//4. Generate Pre-master, Master and encryption key
 	
 	//generating pre-master key
+	server_public = EC_POINT_new(EC_KEY_get0_group(client));
+	printf("\nconverted into struct point: %d",EC_POINT_oct2point(EC_KEY_get0_group(client), server_public, server_pub, 65, NULL));//convert client_pub back to struct
+	pre_master_secret = get_secret(client,server_public,&pre_master_secret_len);
+	printf("\npre master secret: %s \n %d",pre_master_secret,pre_master_secret_len);
 	
 	//generating master key
+	memcpy(seed, client_random,32);
+	memcpy(seed+32, server_random, 32);
+	if(pre_master_secret_len>0){
+		EVP_PKEY_CTX *pctx;
+		 size_t outlen = sizeof(master_secret);
+		 pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+
+		 if (EVP_PKEY_derive_init(pctx) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha3_256()) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, seed, 64) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set1_hkdf_key(pctx, pre_master_secret, pre_master_secret_len) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "master secret", 13) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_derive(pctx, master_secret, &outlen) <= 0);
+		 printf("\nMaster Secret: %s",master_secret);
+	}
 	
 	//generating encryption key
+	if(pre_master_secret_len>0){
+		EVP_PKEY_CTX *pctx;
+		 size_t outlen = sizeof(aes_key);
+		 pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+
+		 if (EVP_PKEY_derive_init(pctx) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha3_256()) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, seed, 64) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_set1_hkdf_key(pctx, master_secret, 48) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "key expansion", 13) <= 0);
+		     /* Error */
+		 if (EVP_PKEY_derive(pctx, aes_key, &outlen) <= 0);
+		 printf("\naes_key: %s",aes_key);
+	}
 	
 	free(server_random);
 	free(client_random);

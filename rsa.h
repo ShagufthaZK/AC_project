@@ -166,7 +166,7 @@ char* private_decrypt_rsa(unsigned char* privateKey, unsigned char* encrypt){
  char *decrypt = malloc(strlen(encrypt));
  //char* base64Text;
  char* err = malloc(130);
- printf("\n%d",strlen(encrypt)+20);
+ //printf("\n%d",strlen(encrypt)+20);
  //Base64Decode(decrypt, sizeof(encrypt), &base64Text);
  if(RSA_private_decrypt(384, (unsigned char*)encrypt, (unsigned char*)decrypt,
                        privateRSA, RSA_PKCS1_OAEP_PADDING) == -1) {
