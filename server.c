@@ -27,10 +27,10 @@ void func(int connfd)
 	char buff[MAX];
 	
 	unsigned char* server_random = (unsigned char*)malloc(sizeof(char)*32);
-	unsigned char* client_random = (unsigned char*)malloc(sizeof(char)*32);
-	unsigned char* server_public_key_data = (unsigned char*)malloc(sizeof(char)*2500);;
+	unsigned char* client_random = (unsigned char*)malloc(sizeof(char)*33);
+	unsigned char* server_public_key_data = (unsigned char*)malloc(sizeof(char)*626);;
 	unsigned char* ca_private_key_data = (unsigned char*)malloc(sizeof(char)*2500);
-	unsigned char* digest=(unsigned char*)malloc(sizeof(char)*800);
+	unsigned char* digest=(unsigned char*)malloc(sizeof(char)*521);
 	//unsigned char* sign=(unsigned char*)malloc(sizeof(char)*100);
 	unsigned char* client_dh = (unsigned char*)malloc(sizeof(char)*800);
 	unsigned char* client_pub, *server_pub;
@@ -41,85 +41,97 @@ void func(int connfd)
 	
 	//1. genererate nonce1 which is sent from server to client
 	
-	f1 = open("/dev/urandom",O_RDONLY);
-	read(f1, server_random, sizeof(char)*32);//sizeof(client_random));
-	close(f1);
-	printf("\nSending server random = %s",server_random);
-	
 	//recieve random from client
-	bzero(buff, sizeof(buff));
-	read(connfd, buff, sizeof(buff));
-	memcpy(client_random,buff,32);
+	n = read(connfd, client_random, 33);
 	printf("\nRecieved Client random : %s", client_random);
+	printf("\nbytes read for client random = %d",n);
 	
 	//send random to client
-	bzero(buff, sizeof(buff));
-	memcpy(buff,server_random,32);
-	write(connfd, buff, sizeof(buff));
-	
-	
+	f1 = open("/dev/urandom",O_RDONLY);
+	read(f1, server_random, sizeof(char)*32);//sizeof(client_random));
+	server_random[32]='\0';
+	close(f1);
+	n = write(connfd, server_random, 33);
+	printf("\nSending server random = %s",server_random);
+	printf("\nbytes sent for server random = %d",n);
+		
+		
+		
 	//2. Now server sends its public key certificate
 	
 	//send server public key
-	
 	f1 = open("Server_keys/public_key.pem",O_RDONLY);	
-	read(f1, server_public_key_data, sizeof(char)*2484);	
+	n = read(f1, server_public_key_data, 625);
+	server_public_key_data[625] = '\0';
+	printf("\nbytes in server pk: %d",n);	
 	close(f1);
-	write(connfd, server_public_key_data, sizeof(char)*2484);
+	n = write(connfd, server_public_key_data, 626);
+	printf("\nbytes sent in server pk: %d",n);
 	
 	//send digital signature
-	
 	f1 = open("CA_keys/private-key.pem",O_RDONLY);	
-	read(f1, ca_private_key_data, sizeof(char)*2484);	
+	n = read(f1, ca_private_key_data, sizeof(char)*2484);
+	//printf("\nbytes in ca pr_k: %d",n);	
 	close(f1);
 	digest = signMessage(ca_private_key_data,server_public_key_data);
-	write(connfd, digest, 5000);
-	//printf("%s",digest);
+	n = write(connfd, digest, 521);
+	n=0;
+	while(digest[n]!='\0') ++n;
+	printf("digest length :%d",n);
 	
 	
-	//3. Now recieve the secret from client and send own dh public info ->>>>>>> then derive the premaster secret
 	
-	//recieve clients public key
-	read(connfd, client_dh, 600);
+	//3. Now recieve the secret from client and send own dh public info
+	
+	//recieve enc clients DH public key
+	n = read(connfd, client_dh, 384);
+	printf("\n bytes sent to server for dh: %d",n);
 	//printf("\n recieved enc client dh:%s",client_dh);
+	
+	//decrypt the recieved params
 	bzero(ca_private_key_data, sizeof(ca_private_key_data)); //ca_private_key_data is being reused as server_private_key_data
 	f1 = open("Server_keys/private_key.pem",O_RDONLY);	
 	read(f1, ca_private_key_data, sizeof(char)*2500);	
 	close(f1);
-	//printf("%s",ca_private_key_data);
 	client_pub = private_decrypt_rsa(ca_private_key_data,client_dh);
-	
 	printf("\nDecrypted client dh:\n %s",client_pub);
-	//convert client_pub back to struct
-	client_public = (EC_POINT*)client_pub;
+	client_public = (EC_POINT*)client_pub; //convert client_pub back to struct
 	
 	//generate server keys, sign with private key and share with client
 	server = create_key();
 	server_public = EC_KEY_get0_public_key(server);
 	server_pub = (unsigned char*)malloc(sizeof(server_public));
 	memcpy(server_pub,(unsigned char*)&server_public, sizeof(server_public));
-	//memcpy(server_pub,"1234567",8);
-	write(connfd, server_pub, sizeof(server_pub));
-	printf("\n sent server dh: %s\n",server_pub);
+	n = write(connfd, server_pub, sizeof(server_pub));
+	printf("\n sent server dh: %s and bytes written %d\n",server_pub,n);
 	
-	sleep(5);
-	/*
-	bzero(digest, 800);
+	//send the digital signature for server DH param
+	
+	bzero(digest, 521);
 	digest = signMessage(ca_private_key_data,server_pub);
 	printf("\n sent digest: %s",digest);
-	write(connfd, digest, 600);
+	write(connfd, digest, 521);
 	
 	printf("\ndecrypted client dh: %s",client_pub);
 	printf("\nsent server dh: %s",server_pub);
-	//now generate the shared pre-master secret
-	/*
+	
+	
+	
+	//4. Generate Pre-master, Master and encryption key
+	
+	//generating pre-master key
+	
+	//generating master key
+	
+	//generating encryption key
+	
 	free(server_random);
 	free(client_random);
 	free(server_public_key_data);
 	free(ca_private_key_data);
 	free(digest);
 	free(client_dh);
-	*/
+	
 }
 
 // Driver function
