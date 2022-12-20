@@ -13,6 +13,7 @@
 #include<sys/wait.h>
 #include "rsa.h"
 #include "ecdhe.h"
+#include "aes_gcm.h"
 #include <openssl/ec.h>
 #include <openssl/ecdh.h>
 #include <unistd.h>
@@ -22,8 +23,11 @@
 void func(int sockfd)
 {
 	char buff[MAX];
+	char ciphertext[MAX];
+	char tag[30];
 	unsigned char master_secret[49];
 	unsigned char aes_key[33];
+	unsigned char init_iv[12];
 	unsigned char* client_random = (unsigned char*)malloc(sizeof(char)*33);
 	unsigned char* server_random = (unsigned char*)malloc(sizeof(char)*33);
 	unsigned char* seed = (unsigned char*)malloc(sizeof(char)*65);
@@ -172,9 +176,72 @@ void func(int sockfd)
 		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "key expansion", 13) <= 0);
 		     /* Error */
 		 if (EVP_PKEY_derive(pctx, aes_key, &outlen) <= 0);
-		 printf("\naes_key: %s",aes_key);
+		 outlen = sizeof(init_iv);
+		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);
+		 printf("\naes_key: %s\n",aes_key);
+		 printf("\ninit_iv: %s",init_iv);
 	}
-	
+	fflush(stdout);
+	//5. Exchange messages encrypted using AES-GCM
+	if(pre_master_secret_len>0){
+		EVP_PKEY_CTX *pctx;
+		unsigned char iv[12];
+		 size_t outlen = sizeof(iv);
+		 pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+
+		 if (EVP_PKEY_derive_init(pctx) <= 0);
+		 if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha3_256()) <= 0);		     
+		 if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, seed, 64) <= 0);		     
+		 if (EVP_PKEY_CTX_set1_hkdf_key(pctx, init_iv, 12) <= 0);		     
+		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "iv expansion", 12) <= 0);
+		    		 
+		 for (;;) {
+		 	//send iv
+			bzero(iv, sizeof(iv));
+			EVP_PKEY_derive(pctx, iv, &outlen);
+			n = write(sockfd, iv, outlen);
+			printf("\nbytes of iv send: %d %s",n,iv);
+			fflush(stdout);
+			
+			//send encrypted mssg
+			bzero(buff, sizeof(buff));
+			printf("\nEnter the string : ");
+			n = 0;
+			//memcpy(buff,"1234567",7);
+			//scanf("%s",buff);
+			//while(buff[n++]!='\0');
+			while ((buff[n++] = getchar()) != '\n');
+			n = gcm_encrypt(buff,n,NULL,0,aes_key,iv,12,ciphertext,tag);
+			if(n>=0)printf("\nencryption successfull");
+			else {printf("\nencryption failed");return;}
+			ciphertext[n] = '\0';
+			n = write(sockfd, ciphertext, sizeof(ciphertext));
+			printf("\nbytes of ciphertext sent: %d \nciphertext:%s",n,ciphertext);
+			n = write(sockfd, tag, sizeof(tag));
+			printf("\nbytes of tag sent: %d %s",n,tag);
+			printf("\nmessage sent");
+			
+			//recieve server iv 
+			bzero(iv, sizeof(iv));
+			read(sockfd, iv, sizeof(iv));
+			
+			//decrypt and print server mssg
+			bzero(ciphertext, sizeof(ciphertext));
+			n = read(sockfd, ciphertext, sizeof(ciphertext));
+			read(sockfd,tag,sizeof(tag));
+			gcm_decrypt(ciphertext,n,NULL,0,tag,aes_key,iv,12,buff);
+
+			printf("\nFrom Server : %s", buff);
+			fflush(stdout);
+			
+			//end exchange
+			if ((strncmp(buff, "exit", 4)) == 0) {
+			    printf("\nClient Exit...\n");
+			    break;
+			}
+    		}
+	}
+		
 	free(server_random);
 	free(client_random);
 	free(server_public_key_data);

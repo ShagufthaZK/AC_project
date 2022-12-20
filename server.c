@@ -13,6 +13,7 @@
 #include<sys/wait.h>
 #include "rsa.h"
 #include "ecdhe.h"
+#include "aes_gcm.h"
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <unistd.h>
@@ -28,8 +29,11 @@
 void func(int connfd)
 {
 	char buff[MAX];
+	char ciphertext[MAX];
+	char tag[30];
 	unsigned char master_secret[49];
 	unsigned char aes_key[33];
+	unsigned char init_iv[12];
 	unsigned char* server_random = (unsigned char*)malloc(sizeof(char)*33);
 	unsigned char* client_random = (unsigned char*)malloc(sizeof(char)*33);
 	unsigned char* seed = (unsigned char*)malloc(sizeof(char)*65);
@@ -143,13 +147,13 @@ void func(int connfd)
 		 pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
 
 		 if (EVP_PKEY_derive_init(pctx) <= 0);
-		     /* Error */
+		     
 		 if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha3_256()) <= 0);
-		     /* Error */
+		     
 		 if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, seed, 64) <= 0);
-		     /* Error */
+		     
 		 if (EVP_PKEY_CTX_set1_hkdf_key(pctx, pre_master_secret, pre_master_secret_len) <= 0);
-		     /* Error */
+		     
 		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "master secret", 13) <= 0);
 		     /* Error */
 		 if (EVP_PKEY_derive(pctx, master_secret, &outlen) <= 0);
@@ -173,9 +177,74 @@ void func(int connfd)
 		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "key expansion", 13) <= 0);
 		     /* Error */
 		 if (EVP_PKEY_derive(pctx, aes_key, &outlen) <= 0);
+		 outlen = sizeof(init_iv);
+		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);
+		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);//so that server and client init_iv's are different
 		 printf("\naes_key: %s",aes_key);
+		 printf("\ninit_iv: %s",init_iv);
 	}
+	fflush(stdout);
 	
+	//5. Exchange messages encrypted using AES-GCM
+	if(1>0){
+		EVP_PKEY_CTX *pctx;
+		unsigned char iv[12];
+		 size_t outlen = sizeof(iv);
+		 pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
+
+		 if (EVP_PKEY_derive_init(pctx) <= 0);
+		     
+		 if (EVP_PKEY_CTX_set_hkdf_md(pctx, EVP_sha3_256()) <= 0);
+		     
+		 if (EVP_PKEY_CTX_set1_hkdf_salt(pctx, seed, 64) <= 0);
+		     
+		 if (EVP_PKEY_CTX_set1_hkdf_key(pctx, init_iv, 12) <= 0);
+		     
+		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "iv expansion", 12) <= 0);
+		     
+		for (;;) {
+		
+			//recieve iv
+			bzero(iv, sizeof(iv));
+			n = read(connfd, iv, 12);
+			printf("\nbytes of iv recieved: %d %s",n,iv);
+			fflush(stdout);
+			
+			//recieve enc mssg and tag
+			bzero(ciphertext, sizeof(ciphertext));
+			n = read(connfd, ciphertext, sizeof(ciphertext));
+			printf("\nbytes of ciphertext recieved: %d \nciphertext:%s",n,ciphertext);
+			n = read(connfd,tag,sizeof(tag));
+			printf("\nbytes of tag recieved: %d %s",n,tag);
+			
+			//decrypt and print mssg
+			n = gcm_decrypt(ciphertext,n,NULL,0,tag,aes_key,iv,12,buff);
+			if(n>=0)printf("\ndecryption successfull");
+			//else {printf("\ndecryption failed");return;}
+			printf("\nFrom client: %s\t To client : ", buff);
+			fflush(stdout);
+			
+			//send own iv
+			bzero(iv, sizeof(iv));
+			EVP_PKEY_derive(pctx, iv, &outlen);
+			write(connfd, iv, sizeof(iv));
+			
+			//send own enc mssg and tag
+			bzero(buff, MAX);
+			n = 0;
+			//memcpy(buff,"abcdefg",7);
+			//while (buff[n++] != '\0');
+			while ((buff[n++] = getchar()) != '\n');
+			gcm_encrypt(buff,n,NULL,0,aes_key,iv,12,ciphertext,tag);
+			write(connfd, ciphertext, sizeof(ciphertext));
+			write(connfd, tag, sizeof(tag));
+			
+			if (strncmp("exit", buff, 4) == 0) {
+			    printf("\nServer Exit...\n");
+			    break;
+			}
+	    	}
+    	}
 	
 	free(server_random);
 	free(client_random);
