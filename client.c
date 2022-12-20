@@ -42,7 +42,9 @@ void func(int sockfd)
 	
 	
 	//1. genererate nonce1 which is sent from client to server
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                           SHARING RANDOM NUMBERS                            \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//send nonce to server
 	f1 = open("/dev/urandom",O_RDONLY);
 	n = read(f1, client_random, sizeof(char)*32);//sizeof(client_random));
@@ -50,26 +52,28 @@ void func(int sockfd)
 	close(f1);
 	printf("\nSending client random =\n %s",client_random);
 	n = write(sockfd, client_random, 33);
-	printf("\nbytes sent for client random = %d %d",n,sizeof(*client_random));
+	//printf("\nbytes sent for client random = %d %d",n,sizeof(*client_random));
 	
 	//recieve nonce from server
 	n = read(sockfd, server_random, 33);
 	printf("\nRecieved server random = %s",server_random);
-	printf("\nbytes read for server random = %d",n);
+	//printf("\nbytes read for server random = %d",n);
 	
 	
 	
 	//2. Recieve certificate from server and verify it using CA public key
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                    RECIEVING AND VERIFYING SERVER CERTIFICATE               \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//recieving public key
 	n = read(sockfd, server_public_key_data, 626);
 	printf("\nServer public key:\n%s",server_public_key_data);
-	printf("\nbytes read for Server public key = %d",n);
+	//printf("\nbytes read for Server public key = %d",n);
 	
 	//recieving signature
 	n = read(sockfd, digest, 521);
 	printf("\nDigital Signature:\n%s",digest);
-	printf("\nbytes read for digital sign = %d",n);
+	//printf("\nbytes read for digital sign = %d",n);
 	
 	//verifying signature
 	f1 = open("CA_keys/public-key.pem",O_RDONLY);	
@@ -77,7 +81,7 @@ void func(int sockfd)
 	close(f1);
 	n = verifySignature(ca_public_key_data,server_public_key_data,digest);	
 	if(n==0){
-		printf("\nServer certificate invalid");
+		printf("\nServer certificate invalid\n");
 		return;
 	}else{
 		printf("\nSignature verified\n");
@@ -86,7 +90,9 @@ void func(int sockfd)
 	
 	
 	//3. Sending ecdhe parameters to server and recieving response
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                            EXCHANGING ECDHE PARAMETERS                       \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//generate client ecdhe parameters
 	client = create_key();
 	client_public = EC_KEY_get0_public_key(client);
@@ -95,22 +101,22 @@ void func(int sockfd)
 	client_pub = (unsigned char*)malloc(sizeof(char)*66);
 	n = EC_POINT_point2oct(EC_KEY_get0_group(client), client_public, POINT_CONVERSION_UNCOMPRESSED, client_pub, 66, NULL);
 	//client_pub[n]='\0';
-	printf("\nlenght of serialized dh param: %d",n);
+	//printf("\nlenght of serialized dh param: %d",n);
 	
 	//encrypt and send using server public rsa key
 	enc_dh = public_encrypt_rsa(server_public_key_data,client_pub);
-	printf("\nSent Client DH param: %s",client_pub);
-	printf("\nsent to server:%s",enc_dh);
+	printf("\nClient DH param:\n%s",client_pub);
+	printf("\nSent encrypted dh to server:\n%s",enc_dh);
 	n = 0;
 	while(enc_dh[n]!='\0') ++n;
-	printf("\nlength of enc_dh:%d",n);
+	//printf("\nlength of enc_dh:%d",n);
 	n = write(sockfd, enc_dh, 600);
-	printf("\nbytes sent to server for dh: %d",n);
+	//printf("\nbytes sent to server for dh: %d",n);
 	
 	//recieve server dh 
 	server_pub = (unsigned char*)malloc(66);
 	n = read(sockfd, server_pub, 66);
-	printf("\nRecieved server DH param: %s and bytes read %d\n",server_pub,n);
+	printf("\nRecieved server DH param:\n%s ",server_pub);
 	//server_public = (EC_POINT*)server_pub;
 	
 	//verify server dh using digital signature
@@ -125,17 +131,20 @@ void func(int sockfd)
 		printf("\nServer DH valid");
 	}
 	
-	printf("\nclient dh: %s",client_pub);
-	printf("\nserver dh: %s",server_pub);
+	printf("\n\nclient dh: %s",client_pub);
+	printf("\n\nserver dh: %s",server_pub);
 	
 	
 	//4. Generate Pre-master, Master and encryption key
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                  GENERATE PRE-MASTER, MASTER AND ENCRYPTION KEYS                \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//generating pre-master key
 	server_public = EC_POINT_new(EC_KEY_get0_group(client));
-	printf("\nconverted into struct point: %d",EC_POINT_oct2point(EC_KEY_get0_group(client), server_public, server_pub, 65, NULL));//convert client_pub back to struct
+	n = EC_POINT_oct2point(EC_KEY_get0_group(client), server_public, server_pub, 65, NULL);
+	//printf("\nconverted into struct point: %d",n);//convert client_pub back to struct
 	pre_master_secret = get_secret(client,server_public,&pre_master_secret_len);
-	printf("\npre master secret: %s \n %d",pre_master_secret,pre_master_secret_len);
+	printf("\npre master secret: %s \n ",pre_master_secret);
 	
 	//generating master key
 	memcpy(seed, client_random,32);
@@ -156,7 +165,7 @@ void func(int sockfd)
 		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "master secret", 13) <= 0);
 		     /* Error */
 		 if (EVP_PKEY_derive(pctx, master_secret, &outlen) <= 0);
-		 printf("\nMaster Secret: %s",master_secret);
+		 printf("\n\nMaster Secret: %s",master_secret);
 	}
 	
 	//generating encryption key
@@ -178,11 +187,16 @@ void func(int sockfd)
 		 if (EVP_PKEY_derive(pctx, aes_key, &outlen) <= 0);
 		 outlen = sizeof(init_iv);
 		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);
-		 printf("\naes_key: %s\n",aes_key);
-		 printf("\ninit_iv: %s",init_iv);
+		 printf("\n\naes_key: %s\n",aes_key);
+		 printf("\n\ninit_iv: %s",init_iv);
 	}
 	fflush(stdout);
 	//5. Exchange messages encrypted using AES-GCM
+	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                  EXCHANGING MESSAGES USING AES256 GCM               \n");
+	printf("\n-----------------------------------------------------------------------------\n");
+	
 	if(pre_master_secret_len>0){
 		EVP_PKEY_CTX *pctx;
 		unsigned char iv[12];
@@ -200,39 +214,43 @@ void func(int sockfd)
 			bzero(iv, sizeof(iv));
 			EVP_PKEY_derive(pctx, iv, &outlen);
 			n = write(sockfd, iv, outlen);
-			printf("\nbytes of iv send: %d %s",n,iv);
+			
 			fflush(stdout);
 			
 			//send encrypted mssg
 			bzero(buff, sizeof(buff));
-			printf("\nEnter the string : ");
+			bzero(tag, sizeof(tag));
+			bzero(ciphertext, sizeof(ciphertext));
+			printf("\nEnter the string (type 'exit' to exit): ");
 			n = 0;
 			//memcpy(buff,"1234567",7);
 			//scanf("%s",buff);
 			//while(buff[n++]!='\0');
 			while ((buff[n++] = getchar()) != '\n');
 			n = gcm_encrypt(buff,n,NULL,0,aes_key,iv,12,ciphertext,tag);
-			if(n>=0)printf("\nencryption successfull");
-			else {printf("\nencryption failed");return;}
+			//if(n>=0)printf("\nencryption successfull");
+			//else {printf("\nencryption failed");return;}
 			ciphertext[n] = '\0';
 			n = write(sockfd, ciphertext, sizeof(ciphertext));
-			printf("\nbytes of ciphertext sent: %d \nciphertext:%s",n,ciphertext);
+			printf("\niv sent to server:%s",iv);
+			printf("\n\nciphertext:%s",ciphertext);
 			n = write(sockfd, tag, sizeof(tag));
-			printf("\nbytes of tag sent: %d %s",n,tag);
-			printf("\nmessage sent");
+			printf("\ntag sent: %s",tag);
+			//printf("\nmessage sent");
 			
 			//recieve server iv 
 			bzero(iv, sizeof(iv));
 			read(sockfd, iv, sizeof(iv));
 			
 			//decrypt and print server mssg
+			bzero(buff, sizeof(buff));
 			bzero(ciphertext, sizeof(ciphertext));
 			n = read(sockfd, ciphertext, sizeof(ciphertext));
 			read(sockfd,tag,sizeof(tag));
 			gcm_decrypt(ciphertext,n,NULL,0,tag,aes_key,iv,12,buff);
 
-			printf("\nFrom Server : %s", buff);
-			fflush(stdout);
+			printf("\nFrom Server: %s", buff);
+			//fflush(stdout);
 			
 			//end exchange
 			if ((strncmp(buff, "exit", 4)) == 0) {

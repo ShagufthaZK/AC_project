@@ -49,11 +49,13 @@ void func(int connfd)
 	size_t pre_master_secret_len;
 	
 	//1. genererate nonce1 which is sent from server to client
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                           SHARING RANDOM NUMBERS                            \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//recieve random from client
 	n = read(connfd, client_random, 33);
 	printf("\nRecieved Client random : %s", client_random);
-	printf("\nbytes read for client random = %d",n);
+	//printf("\nbytes read for client random = %d",n);
 	
 	//send random to client
 	f1 = open("/dev/urandom",O_RDONLY);
@@ -62,20 +64,22 @@ void func(int connfd)
 	close(f1);
 	n = write(connfd, server_random, 33);
 	printf("\nSending server random = %s",server_random);
-	printf("\nbytes sent for server random = %d",n);
+	//printf("\nbytes sent for server random = %d",n);
 		
 		
 		
 	//2. Now server sends its public key certificate
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                            SENDING SERVER CERTIFICATE                       \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//send server public key
 	f1 = open("Server_keys/public_key.pem",O_RDONLY);	
 	n = read(f1, server_public_key_data, 625);
 	server_public_key_data[625] = '\0';
-	printf("\nbytes in server pk: %d",n);	
+	printf("\nServer public key: %s",server_public_key_data);	
 	close(f1);
 	n = write(connfd, server_public_key_data, 626);
-	printf("\nbytes sent in server pk: %d",n);
+	//printf("\nbytes sent in server pk: %d",n);
 	
 	//send digital signature
 	f1 = open("CA_keys/private-key.pem",O_RDONLY);	
@@ -86,16 +90,18 @@ void func(int connfd)
 	n = write(connfd, digest, 521);
 	n=0;
 	while(digest[n]!='\0') ++n;
-	printf("digest length :%d",n);
+	printf("\ndigital signature :%s",digest);
 	
 	
 	
 	//3. Now recieve the secret from client and send own dh public info
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                            EXCHANGING ECDHE PARAMETERS                       \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//recieve enc clients DH public key
 	n = read(connfd, client_dh, 600);
-	printf("\n bytes sent to server for dh: %d",n);
-	printf("\n recieved enc client dh:%s",client_dh);
+	//printf("\n bytes sent to server for dh: %d",n);
+	printf("\n Recieved enc client dh:\n%s",client_dh);
 	
 	//decrypt the recieved params
 	bzero(ca_private_key_data, 2500); //ca_private_key_data is being reused as server_private_key_data
@@ -113,29 +119,32 @@ void func(int connfd)
 	server_pub = (unsigned char*)malloc(sizeof(char)*66);
 	n = EC_POINT_point2oct(EC_KEY_get0_group(server), server_public, POINT_CONVERSION_UNCOMPRESSED, server_pub, 66, NULL);
 	server_pub[n]='\0';
-	printf("\nlenght of serialized dh param: %d",n);
+	//printf("\nlenght of serialized dh param: %d",n);
 	n = write(connfd, server_pub, 66);
-	printf("\n sent server dh: %s and bytes written %d\n",server_pub,n);
+	printf("\n sent server dh param: \n%s ",server_pub);
 	
 	//send the digital signature for server DH param
 	
 	bzero(digest, 521);
 	digest = signMessage(ca_private_key_data,server_pub);
-	printf("\nsent digest: %s",digest);
+	printf("\nsent digest:\n %s",digest);
 	write(connfd, digest, 521);
 	
-	printf("\ndecrypted client dh: %s",client_pub);
-	printf("\nsent server dh: %s",server_pub);
+	printf("\n\ndecrypted client dh: %s",client_pub);
+	printf("\n\nsent server dh: %s",server_pub);
 	
 	
 	
 	//4. Generate Pre-master, Master and encryption key
-	
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                  GENERATE PRE-MASTER, MASTER AND ENCRYPTION KEYS                \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	//generating pre-master key
 	client_public = EC_POINT_new(EC_KEY_get0_group(server));
-	printf("\nconverted into struct point: %d",EC_POINT_oct2point(EC_KEY_get0_group(server), client_public, client_pub, 65, NULL));//convert client_pub back to struct
+	n = EC_POINT_oct2point(EC_KEY_get0_group(server), client_public, client_pub, 65, NULL);
+	//printf("\nconverted into struct point: %d",n);//convert client_pub back to struct
 	pre_master_secret = get_secret(server,client_public,&pre_master_secret_len);
-	printf("\npre master secret: %s \n %d",pre_master_secret,pre_master_secret_len);
+	printf("\npre master secret: %s \n",pre_master_secret);
 	
 	
 	//generating master key
@@ -157,7 +166,7 @@ void func(int connfd)
 		 if (EVP_PKEY_CTX_add1_hkdf_info(pctx, "master secret", 13) <= 0);
 		     /* Error */
 		 if (EVP_PKEY_derive(pctx, master_secret, &outlen) <= 0);
-		 printf("\nMaster Secret: %s",master_secret);
+		 printf("\n\nMaster Secret: %s",master_secret);
 	}
 	
 	//generating encryption key
@@ -180,12 +189,15 @@ void func(int connfd)
 		 outlen = sizeof(init_iv);
 		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);
 		 if (EVP_PKEY_derive(pctx, init_iv, &outlen) <= 0);//so that server and client init_iv's are different
-		 printf("\naes_key: %s",aes_key);
-		 printf("\ninit_iv: %s",init_iv);
+		 printf("\n\naes_key: %s",aes_key);
+		 printf("\n\ninit_iv: %s",init_iv);
 	}
 	fflush(stdout);
 	
 	//5. Exchange messages encrypted using AES-GCM
+	printf("\n-----------------------------------------------------------------------------\n");
+	printf("\n                  EXCHANGING MESSAGES USING AES256 GCM               \n");
+	printf("\n-----------------------------------------------------------------------------\n");
 	if(1>0){
 		EVP_PKEY_CTX *pctx;
 		unsigned char iv[12];
@@ -211,17 +223,20 @@ void func(int connfd)
 			fflush(stdout);
 			
 			//recieve enc mssg and tag
+			
 			bzero(ciphertext, sizeof(ciphertext));
+			bzero(tag, sizeof(tag));
 			n = read(connfd, ciphertext, sizeof(ciphertext));
-			printf("\nbytes of ciphertext recieved: %d \nciphertext:%s",n,ciphertext);
+			printf("\nciphertext:%s",ciphertext);
 			n = read(connfd,tag,sizeof(tag));
-			printf("\nbytes of tag recieved: %d %s",n,tag);
+			printf("\ntag recieved: %s",tag);
 			
 			//decrypt and print mssg
+			bzero(buff, sizeof(buff));
 			n = gcm_decrypt(ciphertext,n,NULL,0,tag,aes_key,iv,12,buff);
-			if(n>=0)printf("\ndecryption successfull");
+			//if(n>=0)printf("\ndecryption successfull");
 			//else {printf("\ndecryption failed");return;}
-			printf("\nFrom client: %s\t To client : ", buff);
+			printf("\nDecrypted mssg from client: %s\n\n Enter mssg to send to client(type 'exit' to exit): ", buff);
 			fflush(stdout);
 			
 			//send own iv
@@ -231,6 +246,8 @@ void func(int connfd)
 			
 			//send own enc mssg and tag
 			bzero(buff, MAX);
+			bzero(ciphertext, sizeof(ciphertext));
+			bzero(tag, sizeof(tag));
 			n = 0;
 			//memcpy(buff,"abcdefg",7);
 			//while (buff[n++] != '\0');
